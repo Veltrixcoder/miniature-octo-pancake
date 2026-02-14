@@ -15,10 +15,9 @@ const INVIDIOUS_INSTANCES = [
   'y.com.sb'
 ];
 
-const stremion_INSTANCES = [
+const STREMIO_INSTANCES = [
   'https://ubiquitous-rugelach-b30b3f.netlify.app',
-  'https://super-duper-system.netlify.app',
-  'https://ubiquitous-rugelach-b30b3f.netlify.app'
+  'https://super-duper-system.netlify.app'
 ];
 
 // Helper function to make fetch requests with timeout
@@ -39,31 +38,62 @@ async function fetchWithTimeout(url, options = {}, timeout = 10000) {
   }
 }
 
-// JioSaavn API handler
+// JioSaavn API handler with improved matching
 async function searchJioSaavn(title, author, duration) {
   try {
+    // Build search query - combine title and author for better results
     const query = author ? `${title} ${author}` : title;
     const searchUrl = `${SAAVN_BASE_URL}/api/search/songs?query=${encodeURIComponent(query)}`;
     
-    const response = await fetchWithTimeout(searchUrl);
-    if (!response.ok) throw new Error('JioSaavn search failed');
+    console.log('Searching JioSaavn:', searchUrl);
+    
+    const response = await fetchWithTimeout(searchUrl, {}, 10000);
+    if (!response.ok) {
+      throw new Error(`JioSaavn HTTP ${response.status}`);
+    }
     
     const data = await response.json();
     
-    if (!data.success || !data.data.results || data.data.results.length === 0) {
-      throw new Error('No results found');
+    if (!data.success || !data.data || !data.data.results || data.data.results.length === 0) {
+      throw new Error('No results found in JioSaavn');
     }
     
-    // Find best match based on duration if provided
+    console.log(`Found ${data.data.results.length} results on JioSaavn`);
+    
+    // Find best match
     let bestMatch = data.data.results[0];
     
-    if (duration && data.data.results.length > 1) {
+    // If author and duration provided, try to find better match
+    if (author && duration && data.data.results.length > 1) {
       const targetDuration = parseInt(duration);
+      const authorLower = author.toLowerCase();
+      
+      // Split author by common separators to handle multiple artists
+      const authorNames = authorLower.split(/[,&]/).map(a => a.trim());
+      
       bestMatch = data.data.results.reduce((best, current) => {
-        if (!current.duration || !best.duration) return best;
-        const currentDiff = Math.abs(current.duration - targetDuration);
-        const bestDiff = Math.abs(best.duration - targetDuration);
-        return currentDiff < bestDiff ? current : best;
+        // Get all artist names from current song
+        const currentArtists = [
+          ...(current.artists?.primary?.map(a => a.name.toLowerCase()) || []),
+          ...(current.artists?.featured?.map(a => a.name.toLowerCase()) || [])
+        ];
+        
+        // Check if any provided author matches
+        const artistMatch = authorNames.some(authName => 
+          currentArtists.some(artist => 
+            artist.includes(authName) || authName.includes(artist)
+          )
+        );
+        
+        // Calculate duration difference
+        const currentDiff = current.duration ? Math.abs(current.duration - targetDuration) : 99999;
+        const bestDiff = best.duration ? Math.abs(best.duration - targetDuration) : 99999;
+        
+        // Prefer artist match, then duration match
+        if (artistMatch && currentDiff < 30) return current; // Within 30 seconds
+        if (currentDiff < bestDiff) return current;
+        
+        return best;
       });
     }
     
@@ -77,10 +107,13 @@ async function searchJioSaavn(title, author, duration) {
       ? bestMatch.image[bestMatch.image.length - 1].url
       : null;
     
-    // Extract artist names
-    const artists = bestMatch.artists?.primary?.map(a => a.name).join(', ') || 
-                   bestMatch.artists?.all?.map(a => a.name).join(', ') || 
-                   'Unknown';
+    // Extract all artist names (primary + featured)
+    const primaryArtists = bestMatch.artists?.primary?.map(a => a.name) || [];
+    const featuredArtists = bestMatch.artists?.featured?.map(a => a.name) || [];
+    const allArtistNames = [...primaryArtists, ...featuredArtists];
+    const artists = allArtistNames.length > 0 ? allArtistNames.join(', ') : 'Unknown';
+    
+    console.log('JioSaavn match:', bestMatch.name, 'by', artists);
     
     return {
       source: 'saavn',
@@ -97,29 +130,36 @@ async function searchJioSaavn(title, author, duration) {
   }
 }
 
-// stremion API handler
-async function fetchFromstremion(videoId) {
-  for (const instance of stremion_INSTANCES) {
+// Stremio API handler
+async function fetchFromStremio(videoId) {
+  for (const instance of STREMIO_INSTANCES) {
     try {
       const url = `${instance}/api/v1/videos/${videoId}`;
+      console.log('Trying Stremio:', url);
+      
       const response = await fetchWithTimeout(url, {}, 8000);
       
-      if (!response.ok) continue;
+      if (!response.ok) {
+        console.log(`Stremio ${instance} returned ${response.status}`);
+        continue;
+      }
       
       const data = await response.json();
       
+      console.log('Stremio success:', instance);
+      
       return {
-        source: 'stremion',
+        source: 'stremio',
         instance: instance,
         data: data
       };
     } catch (error) {
-      console.error(`stremion instance ${instance} failed:`, error.message);
+      console.error(`Stremio instance ${instance} failed:`, error.message);
       continue;
     }
   }
   
-  throw new Error('All stremion instances failed');
+  throw new Error('All Stremio instances failed');
 }
 
 // Invidious API handler
@@ -127,11 +167,18 @@ async function fetchFromInvidious(videoId) {
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
       const url = `https://${instance}/api/v1/videos/${videoId}`;
+      console.log('Trying Invidious:', url);
+      
       const response = await fetchWithTimeout(url, {}, 8000);
       
-      if (!response.ok) continue;
+      if (!response.ok) {
+        console.log(`Invidious ${instance} returned ${response.status}`);
+        continue;
+      }
       
       const data = await response.json();
+      
+      console.log('Invidious success:', instance);
       
       return {
         source: 'invidious',
@@ -170,43 +217,52 @@ export default async function handler(req, res) {
     });
   }
   
+  console.log('Request params:', { id, title, author, duration });
+  
   try {
     // Strategy 1: If title is provided, try JioSaavn first
     if (title) {
       try {
-        console.log('Trying JioSaavn...');
+        console.log('=== Trying JioSaavn ===');
         const saavnResult = await searchJioSaavn(title, author, duration);
+        console.log('✅ JioSaavn succeeded');
         return res.status(200).json({
           success: true,
           ...saavnResult
         });
       } catch (error) {
-        console.log('JioSaavn failed, falling back to stremion...');
+        console.log('❌ JioSaavn failed:', error.message);
+        // Continue to next strategy
       }
+    } else {
+      console.log('⏭️  Skipping JioSaavn (no title provided)');
     }
     
-    // Strategy 2: Try stremion
+    // Strategy 2: Try Stremio
     try {
-      console.log('Trying stremion...');
-      const stremionResult = await fetchFromstremion(id);
+      console.log('=== Trying Stremio ===');
+      const stremioResult = await fetchFromStremio(id);
+      console.log('✅ Stremio succeeded');
       return res.status(200).json({
         success: true,
-        ...stremionResult
+        ...stremioResult
       });
     } catch (error) {
-      console.log('stremion failed, falling back to Invidious...');
+      console.log('❌ Stremio failed:', error.message);
+      // Continue to next strategy
     }
     
     // Strategy 3: Try Invidious
     try {
-      console.log('Trying Invidious...');
+      console.log('=== Trying Invidious ===');
       const invidiousResult = await fetchFromInvidious(id);
+      console.log('✅ Invidious succeeded');
       return res.status(200).json({
         success: true,
         ...invidiousResult
       });
     } catch (error) {
-      console.log('Invidious failed');
+      console.log('❌ Invidious failed:', error.message);
     }
     
     // All strategies failed
@@ -215,7 +271,7 @@ export default async function handler(req, res) {
       error: 'Could not fetch audio from any source',
       attempts: {
         saavn: title ? 'failed' : 'skipped',
-        stremion: 'failed',
+        stremio: 'failed',
         invidious: 'failed'
       }
     });

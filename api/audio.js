@@ -61,40 +61,77 @@ async function searchJioSaavn(title, author, duration) {
     console.log(`Found ${data.data.results.length} results on JioSaavn`);
     
     // Find best match
-    let bestMatch = data.data.results[0];
+    let bestMatch = null;
+    let bestScore = -1;
     
-    // If author and duration provided, try to find better match
-    if (author && duration && data.data.results.length > 1) {
+    // If author provided, use strict matching
+    if (author && duration) {
       const targetDuration = parseInt(duration);
       const authorLower = author.toLowerCase();
       
       // Split author by common separators to handle multiple artists
-      const authorNames = authorLower.split(/[,&]/).map(a => a.trim());
+      const authorNames = authorLower
+        .split(/[,&]/)
+        .map(a => a.trim())
+        .filter(a => a.length > 0);
       
-      bestMatch = data.data.results.reduce((best, current) => {
+      console.log('Looking for artists:', authorNames);
+      
+      for (const result of data.data.results) {
         // Get all artist names from current song
         const currentArtists = [
-          ...(current.artists?.primary?.map(a => a.name.toLowerCase()) || []),
-          ...(current.artists?.featured?.map(a => a.name.toLowerCase()) || [])
+          ...(result.artists?.primary?.map(a => a.name.toLowerCase()) || []),
+          ...(result.artists?.featured?.map(a => a.name.toLowerCase()) || [])
         ];
         
-        // Check if any provided author matches
-        const artistMatch = authorNames.some(authName => 
-          currentArtists.some(artist => 
-            artist.includes(authName) || authName.includes(artist)
-          )
-        );
+        console.log(`Checking "${result.name}" by [${currentArtists.join(', ')}]`);
         
-        // Calculate duration difference
-        const currentDiff = current.duration ? Math.abs(current.duration - targetDuration) : 99999;
-        const bestDiff = best.duration ? Math.abs(best.duration - targetDuration) : 99999;
+        // Count how many of the provided artists match
+        let matchedArtists = 0;
+        for (const authName of authorNames) {
+          const found = currentArtists.some(artist => {
+            // More flexible matching - check if artist name contains the search term or vice versa
+            const cleanAuth = authName.replace(/\s+/g, '').toLowerCase();
+            const cleanArtist = artist.replace(/\s+/g, '').toLowerCase();
+            return cleanArtist.includes(cleanAuth) || cleanAuth.includes(cleanArtist);
+          });
+          if (found) matchedArtists++;
+        }
         
-        // Prefer artist match, then duration match
-        if (artistMatch && currentDiff < 30) return current; // Within 30 seconds
-        if (currentDiff < bestDiff) return current;
+        // Calculate match percentage
+        const artistMatchPercent = matchedArtists / authorNames.length;
         
-        return best;
-      });
+        // Calculate duration difference (in percentage)
+        const durationDiff = result.duration ? Math.abs(result.duration - targetDuration) : 999;
+        const durationScore = Math.max(0, 1 - (durationDiff / 60)); // 60 seconds tolerance
+        
+        // Calculate title similarity (basic check)
+        const titleMatch = result.name.toLowerCase().includes(title.toLowerCase()) || 
+                          title.toLowerCase().includes(result.name.toLowerCase()) ? 1 : 0.5;
+        
+        // Overall score: prioritize artist match, then duration, then title
+        const score = (artistMatchPercent * 10) + (durationScore * 3) + (titleMatch * 1);
+        
+        console.log(`  Score: ${score.toFixed(2)} (artists: ${matchedArtists}/${authorNames.length}, duration diff: ${durationDiff}s)`);
+        
+        // Require at least 50% artist match OR very close duration match
+        if (artistMatchPercent >= 0.5 || durationDiff < 10) {
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = result;
+          }
+        }
+      }
+      
+      // If no good match found with strict criteria, reject
+      if (!bestMatch || bestScore < 5) {
+        console.log('No good match found. Best score:', bestScore);
+        throw new Error('No matching song found with provided artist/duration');
+      }
+      
+    } else {
+      // No author provided, just take first result
+      bestMatch = data.data.results[0];
     }
     
     // Find highest quality download URL
@@ -113,7 +150,7 @@ async function searchJioSaavn(title, author, duration) {
     const allArtistNames = [...primaryArtists, ...featuredArtists];
     const artists = allArtistNames.length > 0 ? allArtistNames.join(', ') : 'Unknown';
     
-    console.log('JioSaavn match:', bestMatch.name, 'by', artists);
+    console.log('✅ JioSaavn match:', bestMatch.name, 'by', artists, `(score: ${bestScore.toFixed(2)})`);
     
     return {
       source: 'saavn',

@@ -15,7 +15,7 @@ const INVIDIOUS_INSTANCES = [
   'y.com.sb'
 ];
 
-const STREMIO_INSTANCES = [
+const stremion_INSTANCES = [
   'https://ubiquitous-rugelach-b30b3f.netlify.app',
   'https://super-duper-system.netlify.app',
   'https://ubiquitous-rugelach-b30b3f.netlify.app'
@@ -97,9 +97,9 @@ async function searchJioSaavn(title, author, duration) {
   }
 }
 
-// Stremio API handler
-async function fetchFromStremio(videoId) {
-  for (const instance of STREMIO_INSTANCES) {
+// stremion API handler
+async function fetchFromstremion(videoId) {
+  for (const instance of stremion_INSTANCES) {
     try {
       const url = `${instance}/api/v1/videos/${videoId}`;
       const response = await fetchWithTimeout(url, {}, 8000);
@@ -109,17 +109,17 @@ async function fetchFromStremio(videoId) {
       const data = await response.json();
       
       return {
-        source: 'stremio',
+        source: 'stremion',
         instance: instance,
         data: data
       };
     } catch (error) {
-      console.error(`Stremio instance ${instance} failed:`, error.message);
+      console.error(`stremion instance ${instance} failed:`, error.message);
       continue;
     }
   }
   
-  throw new Error('All Stremio instances failed');
+  throw new Error('All stremion instances failed');
 }
 
 // Invidious API handler
@@ -181,20 +181,20 @@ export default async function handler(req, res) {
           ...saavnResult
         });
       } catch (error) {
-        console.log('JioSaavn failed, falling back to Stremio...');
+        console.log('JioSaavn failed, falling back to stremion...');
       }
     }
     
-    // Strategy 2: Try Stremio
+    // Strategy 2: Try stremion
     try {
-      console.log('Trying Stremio...');
-      const stremioResult = await fetchFromStremio(id);
+      console.log('Trying stremion...');
+      const stremionResult = await fetchFromstremion(id);
       return res.status(200).json({
         success: true,
-        ...stremioResult
+        ...stremionResult
       });
     } catch (error) {
-      console.log('Stremio failed, falling back to Invidious...');
+      console.log('stremion failed, falling back to Invidious...');
     }
     
     // Strategy 3: Try Invidious
@@ -215,7 +215,7 @@ export default async function handler(req, res) {
       error: 'Could not fetch audio from any source',
       attempts: {
         saavn: title ? 'failed' : 'skipped',
-        stremio: 'failed',
+        stremion: 'failed',
         invidious: 'failed'
       }
     });

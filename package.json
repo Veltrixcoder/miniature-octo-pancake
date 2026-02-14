@@ -1,0 +1,23 @@
+{
+  "name": "audio-api-backend",
+  "version": "1.0.0",
+  "description": "Unified audio API combining JioSaavn, Stremio, and Invidious",
+  "main": "api/audio.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel"
+  },
+  "keywords": [
+    "audio",
+    "api",
+    "saavn",
+    "invidious",
+    "stremio"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "vercel": "^33.0.0"
+  }
+}
